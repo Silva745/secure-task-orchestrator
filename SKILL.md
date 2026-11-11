@@ -8,7 +8,9 @@ description: >
   tarefa, pedido ou instrução que possa ser dividida em partes — mesmo sem pedir otimização de
   modelos. Aplica também em prompts compostos como "analisa este ficheiro e cria um relatório",
   "pesquisa sobre X e resume", "refatora este código e documenta", "cria uma plataforma/API/app", ou
-  qualquer pedido com mais do que um passo implícito.
+  qualquer pedido com mais do que um passo implícito. Tem também o modo AUDIT-ONLY: usa-o quando o
+  utilizador pedir para auditar, rever ou verificar a segurança/qualidade de um projeto já existente
+  sem o alterar ("audita este projeto", "revê a segurança disto", "audit-only").
 ---
 
 # Secure Task Orchestrator
@@ -28,7 +30,17 @@ Orquestra o trabalho em quatro eixos:
 > sintetiza. Os subagentes **começam sem contexto** — tudo o que precisam (incluindo as regras
 > aplicáveis) tem de ir no `prompt`.
 
-## Fluxo geral
+## Dois modos
+
+| Modo | Quando | O que faz |
+|---|---|---|
+| **Execução** (por defeito) | O utilizador pede para criar, alterar, refatorar, pesquisar, escrever... | Passos 0–8 abaixo |
+| **Audit-only** | O utilizador pede para auditar/rever um projeto **sem o alterar** | [Modo audit-only](#modo-audit-only--auditar-um-projeto-existente) — read-only, termina em relatório |
+
+Se o pedido for ambíguo ("vê se isto está seguro"), assume **audit-only** (é o modo que não
+altera nada) e oferece passar à correção no fim.
+
+## Fluxo geral (modo execução)
 
 ```
 Passo 0  Perfil do projeto (só código)     → nível de exigência
@@ -309,6 +321,114 @@ Gravidades: **Crítico** · **Alto** · **Médio** · **Baixo**.
 A auditoria é **revisão de código/artefactos por um modelo**. Não substitui testes executados, SAST/
 DAST/SCA, scanning de segredos, auditoria técnica independente nem teste de intrusão. O relatório
 final deve dizer o que foi **verificado por leitura** e o que **só pode ser confirmado em execução**.
+
+---
+
+## Modo audit-only — auditar um projeto existente
+
+Auditoria **só de leitura** a um projeto já criado. Usa as mesmas regras (`references/`), os mesmos
+níveis de exigência e a mesma escala de gravidade do Passo 8, mas **não altera nenhum ficheiro**.
+
+**Garantias do modo (diz-as ao utilizador no início):**
+
+- Não edita, cria nem apaga ficheiros do projeto; o único output é o relatório.
+- Não executa a aplicação, testes, migrações nem comandos com efeitos laterais, salvo pedido
+  explícito. Leituras (ler ficheiros, `grep`, `git log`) são permitidas.
+- **Nunca reproduz segredos encontrados**: mostra só ficheiro, linha, tipo e os primeiros/últimos 2–4
+  caracteres mascarados (ex.: `sk-…a9f2`). Recomenda sempre rotação da credencial.
+- Não faz pedidos de rede ao sistema auditado (sem scans/fuzzing/ataques); isso é teste de intrusão
+  e requer autorização própria.
+
+**Invocação:** `/secure-task-orchestrator audit [caminho] [--nivel 1|2|3]`, ou linguagem natural.
+Sem caminho, audita o diretório de trabalho.
+
+### A0 — Âmbito e perfil
+Fixa o caminho, a stack (inferida de `package.json`, `pyproject.toml`, `composer.json`, `pom.xml`,
+`Dockerfile`, etc.) e o **nível de exigência** (Passo 0). Declara no relatório o que ficou **fora
+de âmbito** (ex.: infraestrutura não presente no repositório).
+
+### A1 — Mapeamento (paralelo, barato)
+Despacha subagentes `Explore` com `model: haiku`, **em paralelo**, cada um com uma pergunta:
+
+1. Estrutura, stack, ponto de entrada, dimensão (nº de ficheiros/linhas por pasta)
+2. Configuração e segredos: `.env*`, ficheiros de config, `.gitignore`, histórico recente
+   (`git log` por ficheiros sensíveis), variáveis `VITE_*`/`NEXT_PUBLIC_*`
+3. Superfície de ataque do Back-end: rotas/endpoints, middlewares, autenticação, autorização
+4. Dados: modelos, migrations, queries (SQL cru, concatenação), uploads, integrações externas
+5. Front-end: rotas, formulários, armazenamento no navegador, `innerHTML`/`dangerouslySetInnerHTML`
+6. Dependências: manifests e lockfiles; pipelines CI/CD; testes existentes
+
+### A2 — Classificação
+Agrupa os achados do mapeamento por camada (**BACK / FRONT / MOBILE / IA / TRANSVERSAL**) e marca 🔒
+as áreas sensíveis (autenticação, autorização, pagamentos, uploads, multi-tenant, segredos).
+
+### A3 — Auditoria por camada (paralelo)
+Um subagente `general-purpose` **por camada**, instruído a ser **estritamente read-only**, com:
+
+- `model: sonnet` por defeito; `opus` para camadas com áreas 🔒 ou nível 3
+- O mapa do A1, a lista de ficheiros prioritários, o nível de exigência
+- A instrução de ler o ficheiro de regras da camada e avaliar **cada regra [O]** (e [R]/[A] conforme
+  o nível) como ✅ / ➖ / ❌ / ❓
+- O formato de saída: `ID da regra · gravidade · ficheiro:linha · evidência (excerto curto,
+  mascarado) · impacto · correção recomendada`
+- Regra de honestidade: **só reportar o que viu no código**. Sem evidência → ❓, nunca ❌.
+
+Em projetos grandes, prioriza por risco (autenticação, autorização, pagamentos, uploads, config,
+rotas públicas) e **declara a cobertura** (ficheiros lidos vs. total). Não finjas ter lido tudo.
+
+### A4 — Validação pelo modelo mais poderoso
+Despacha **um** subagente novo, com o modelo do Passo 8 (`fable` → `opus`), read-only, que recebe
+todos os achados e:
+
+1. **Rejeita falsos positivos** (reabre o ficheiro citado e confirma a evidência)
+2. **Procura o que as camadas isoladas não veem**: validação só no cliente, autorização em falta
+   entre Front e Back, cadeias de falhas, fugas entre tenants
+3. **Reclassifica a gravidade** com justificação
+4. Confirma o que é ❓ (precisa de execução) e não ❌
+
+### A5 — Relatório e plano de correção
+
+```
+🔍 Auditoria de projeto — <nome> — nível de exigência: <1|2|3> — modelo auditor: <fable|opus>
+
+Veredito: ✅ APROVADO | ⚠️ APROVADO COM RESERVAS | ❌ REPROVADO
+
+Âmbito e cobertura: <caminho>, <N> de <M> ficheiros lidos · Fora de âmbito: ...
+Resumo (3–5 linhas) · Contagem: Crítico X · Alto Y · Médio Z · Baixo W
+
+Achados
+| ID | Gravidade | Camada | Regra | Local (ficheiro:linha) | Descrição | Correção recomendada |
+
+Pontos fortes (o que está bem feito)
+Não verificável por leitura (❓): ...
+
+Plano de correção (ordenado por gravidade e dependência)
+ 1. [Crítico] ...  → camada · esforço estimado (S/M/L) · modelo sugerido
+ 2. ...
+```
+
+Termina sempre com os **limites**: a auditoria é revisão estática por modelo e não substitui
+SAST/DAST/SCA, secret scanning real, testes executados nem teste de intrusão.
+
+### A6 — Passagem para correção (opcional)
+Oferece, mas **não inicia sem confirmação**: "Queres que corrija os achados Críticos/Altos?". Se
+sim, transita para o **modo execução** usando o plano de correção como decomposição (Passos 3–8),
+incluindo nova auditoria final. Se o utilizador só quer o relatório, termina aqui.
+
+### Exemplo
+
+```
+> /secure-task-orchestrator audit ./minha-app --nivel 2
+
+📋 Plano (audit-only · read-only)
+1. Mapear estrutura e stack           → Explore         · haiku  · paralelo
+2. Mapear config/segredos             → Explore         · haiku  · paralelo
+3. Mapear rotas, auth e dados         → Explore         · haiku  · paralelo
+4. Auditar BACK (🔒 auth/dados)       → general-purpose · opus   · depende de 1-3
+5. Auditar FRONT                      → general-purpose · sonnet · depende de 1-3
+6. Auditar TRANSVERSAL                → general-purpose · sonnet · depende de 1-3
+7. Validar achados e relatório final  → general-purpose · fable  · depende de 4-6
+```
 
 ---
 

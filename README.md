@@ -35,6 +35,23 @@ Pedido ─▶ Decompor ─▶ Classificar (FRONT/BACK/…) ─▶ Atribuir model
                                      ✅ / ⚠️ / ❌     └─ ❌ ⇒ correção ⇒ re-auditar (máx. 2×)
 ```
 
+### Modo audit-only (projetos já existentes)
+
+Para auditar um projeto **sem o alterar**:
+
+```text
+> /secure-task-orchestrator audit ./minha-app --nivel 2
+```
+
+Fluxo: mapeamento paralelo e barato (`haiku`) → classificação por camada → auditoria read-only por
+camada (`sonnet`/`opus`) → validação por `fable`/`opus`, que elimina falsos positivos e procura
+falhas entre camadas → **relatório com gravidades, cobertura e plano de correção ordenado**.
+
+- Não edita ficheiros nem executa a aplicação.
+- Nunca reproduz segredos encontrados (mascara-os e recomenda rotação).
+- Declara a cobertura real e separa o que é verificável por leitura (❌) do que exige execução (❓).
+- No fim, oferece passar à correção; só avança com a tua confirmação.
+
 ### Regras do início ao fim
 
 Em tarefas de código, as regras não são uma verificação final — acompanham o projeto desde o
@@ -115,7 +132,7 @@ A skill apresenta primeiro o plano:
 
 ```
 secure-task-orchestrator/
-├── SKILL.md                    # Definição da skill (fluxo de 9 passos)
+├── SKILL.md                    # Definição da skill (modo execução + modo audit-only)
 ├── references/
 │   ├── backend-rules.md
 │   ├── frontend-rules.md

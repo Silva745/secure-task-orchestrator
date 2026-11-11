@@ -5,6 +5,15 @@ versionamento [SemVer](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [1.1.0] — 2026-11-11
+
+### Adicionado
+- **Modo audit-only:** auditoria só de leitura a projetos existentes (A0–A6): mapeamento paralelo,
+  auditoria por camada, validação pelo modelo mais poderoso (elimina falsos positivos), relatório com
+  cobertura, gravidades e plano de correção. Mascara segredos e não executa a aplicação.
+- Invocação `/secure-task-orchestrator audit [caminho] [--nivel 1|2|3]`.
+- Secção "Dois modos" no `SKILL.md`; em pedidos ambíguos assume-se audit-only.
+
 ## [1.0.0] — 2026-11-11
 
 Evolução do `smart-task-router`, agora com o nome `secure-task-orchestrator`.
